@@ -110,7 +110,10 @@ async function connectToWhatsApp() {
                 //if (msg.key.fromMe) continue;
                 
                 console.log('📥 Nuevo mensaje recibido');
-                
+                if (!msg.message) {
+                    console.log("⚠️ Mensaje sin contenido (ignorado)");
+                    return;
+                }
                 // Obtener información básica
                 const remoteJid = msg.key.remoteJid;
                 const isGroup = remoteJid.endsWith('@g.us');
@@ -187,10 +190,10 @@ async function connectToWhatsApp() {
                 
                 // 🔥 MANEJO DE TEXTO (código existente)
                 const text =
-                    msg.message.conversation ??
-                    msg.message.extendedTextMessage?.text ??
-                    msg.message.imageMessage?.caption ??
-                    msg.message.videoMessage?.caption ??
+                    msg.message.conversation ||
+                    msg.message.extendedTextMessage?.text ||
+                    msg.message.imageMessage?.caption ||
+                    msg.message.videoMessage?.caption ||
                     null;
 
                 if (!text) continue;
