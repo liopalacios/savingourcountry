@@ -107,15 +107,19 @@ async function connectToWhatsApp() {
 
             for (const msg of messages) {
 
+                 if (msg.key.fromMe) {
+                    console.log('🚫 Mensaje propio ignorado');
+                    continue;
+                }
 
                 // 🔥 MANEJO DE TEXTO (código existente)
                 const text =
-                    msg.message.conversation ||
-                    msg.message.extendedTextMessage?.text ||
-                    msg.message.imageMessage?.caption ||
-                    msg.message.videoMessage?.caption ||
+                    msg.message?.conversation ||
+                    msg.message?.extendedTextMessage?.text ||
+                    msg.message?.imageMessage?.url ||
+                    msg.message?.videoMessage?.caption ||
                     null;
-
+                console.log('📩 Mensaje recibido text:', text);
                 if (!text) continue;
 
                 
@@ -136,20 +140,137 @@ async function connectToWhatsApp() {
 
                 console.log(`📨 ${sender}: ${text}`);
 
+                if (isGroup) {
+                    console.log(`📋 Mensaje de grupo ignorado: ${remoteJid}`);
+                    return; // Salir sin procesar
+                }
+
                 const checkSender = await axios.post(
                             'http://localhost:8000/whatsapp/check-sender',
                             { sender },
                             { timeout: 10000 }
                         );
                 try {
-                                                
+                    console.log(msg.message);                            
                     if (checkSender.data?.exists && !msg.message?.imageMessage) {
+
+                        const textoUpper = text.trim().toUpperCase();
+
+                        if (textoUpper === "SI" || textoUpper === "SÍ"|| textoUpper === "Y" ||
+                            textoUpper === "NO" || textoUpper === "N" ) {
+                            
+                            console.log(`🔄 Posible respuesta de confirmación: ${text}`);
+                            
+                            try {
+                                const response = await axios.post(
+                                    'http://localhost:8000/whatsapp/message',
+                                    {
+                                        id: require('crypto').randomUUID(),
+                                        account_id: 1,
+                                        phone_number: 'whatsapp_bot',
+                                        sender: sender,
+                                        chat_id: remoteJid,
+                                        timestamp: Date.now(),
+                                        type: 'text',
+                                        text: textoUpper,
+                                        image_base64: null,
+                                        caption: null,
+                                        mimetype: null,
+                                        size: 0
+                                    },
+                                    { 
+                                        timeout: 60000,
+                                        headers: { 'Content-Type': 'application/json' }
+                                    }
+                                );
+                                
+                                console.log('✅ Respuesta de Python-confirmacion:', response.data);
+                                
+                                // Enviar respuesta al usuario
+                                if (response.data?.reply) {
+                                    await sock.sendMessage(remoteJid, {
+                                        text: response.data.reply
+                                    });
+                                }
+                                continue;
+                                // No tiene confirmación pendiente, continuar con flujo normal
+                            } catch (error) {
+                                console.error('❌ Error verificando confirmación:', error.message);
+                                // Continuar con flujo normal
+                            }
+                        }
                         // Ya tiene DNI registrado → solicitar foto
                         console.log(`✅ Cliente ya registrado con DNI: ${checkSender.data.dni}`);
                         await sock.sendMessage(remoteJid, {
                             text: '📸 Estamos listos para recibir la foto de tu acta.'
                         });
-                    } else {
+                    } else if (msg.message?.imageMessage) {
+                        console.log('📸 Procesando imagen...');
+                        
+                        try {
+                            // Descargar imagen usando el método correcto
+                            const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+                            
+                            const stream = await downloadContentFromMessage(msg.message.imageMessage, 'image');
+                            let imageBuffer = Buffer.from([]);
+                            
+                            for await (const chunk of stream) {
+                                imageBuffer = Buffer.concat([imageBuffer, chunk]);
+                            }
+                            
+                            if (!imageBuffer || imageBuffer.length === 0) {
+                                console.error('❌ No se pudo descargar la imagen');
+                                await sock.sendMessage(remoteJid, {
+                                    text: '❌ Error al procesar la imagen. Por favor intenta nuevamente.'
+                                });
+                                continue;
+                            }
+                            
+                            console.log(`✅ Imagen descargada: ${imageBuffer.length} bytes`);
+                            
+                            // Convertir a Base64
+                            const imageBase64 = imageBuffer.toString('base64');
+                            const caption = msg.message.imageMessage.caption || '';
+                            
+                            // Enviar imagen + caption a Python
+                            const response = await axios.post(
+                                'http://localhost:8000/whatsapp/message',
+                                {
+                                    id: require('crypto').randomUUID(),
+                                    account_id: 1,
+                                    phone_number: 'whatsapp_bot',
+                                    sender: sender,
+                                    chat_id: remoteJid,
+                                    timestamp: Date.now(),
+                                    type: 'image',
+                                    image_base64: imageBase64,
+                                    caption: caption,
+                                    mimetype: msg.message.imageMessage.mimetype || 'image/jpeg',
+                                    size: imageBuffer.length
+                                },
+                                { 
+                                    timeout: 60000,
+                                    headers: { 'Content-Type': 'application/json' }
+                                }
+                            );
+                            
+                            console.log('✅ Respuesta de Python:', response.data);
+                            
+                            // Enviar respuesta al usuario
+                            if (response.data?.reply) {
+                                await sock.sendMessage(remoteJid, {
+                                    text: response.data.reply
+                                });
+                            }
+                            
+                        } catch (error) {
+                            console.error('❌ Error procesando imagen:', error);
+                            await sock.sendMessage(remoteJid, {
+                                text: '⚠️ Error procesando tu imagen. Por favor intenta nuevamente.'
+                            });
+                        }
+                        continue; // Ya procesamos la imagen, saltamos al siguiente mensaje
+                    }  else {
                         
                         if (/^\d{8}$/.test(text.trim())) {
                             let nombresCompletos = null;
@@ -252,73 +373,7 @@ async function connectToWhatsApp() {
                     });
                 }
                 // 🔥 NUEVO: Manejar mensajes con IMAGEN
-                if (msg.message?.imageMessage) {
-                    console.log('📸 Procesando imagen...');
-                    
-                    try {
-                        // Descargar imagen usando el método correcto
-                        const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
-                        
-                        const stream = await downloadContentFromMessage(msg.message.imageMessage, 'image');
-                        let imageBuffer = Buffer.from([]);
-                        
-                        for await (const chunk of stream) {
-                            imageBuffer = Buffer.concat([imageBuffer, chunk]);
-                        }
-                        
-                        if (!imageBuffer || imageBuffer.length === 0) {
-                            console.error('❌ No se pudo descargar la imagen');
-                            await sock.sendMessage(remoteJid, {
-                                text: '❌ Error al procesar la imagen. Por favor intenta nuevamente.'
-                            });
-                            continue;
-                        }
-                        
-                        console.log(`✅ Imagen descargada: ${imageBuffer.length} bytes`);
-                        
-                        // Convertir a Base64
-                        const imageBase64 = imageBuffer.toString('base64');
-                        const caption = msg.message.imageMessage.caption || '';
-                        
-                        // Enviar imagen + caption a Python
-                        const response = await axios.post(
-                            'http://localhost:8000/whatsapp/message',
-                            {
-                                id: require('crypto').randomUUID(),
-                                account_id: 1,
-                                phone_number: 'whatsapp_bot',
-                                sender: sender,
-                                chat_id: remoteJid,
-                                timestamp: Date.now(),
-                                type: 'image',
-                                image_base64: imageBase64,
-                                caption: caption,
-                                mimetype: msg.message.imageMessage.mimetype || 'image/jpeg',
-                                size: imageBuffer.length
-                            },
-                            { 
-                                timeout: 60000,
-                                headers: { 'Content-Type': 'application/json' }
-                            }
-                        );
-                        
-                        console.log('✅ Respuesta de Python:', response.data);
-                        
-                        // Enviar respuesta al usuario
-                        if (response.data?.reply) {
-                            await sock.sendMessage(remoteJid, {
-                                text: response.data.reply
-                            });
-                        }
-                        
-                    } catch (error) {
-                        console.error('❌ Error procesando imagen:', error);
-                        await sock.sendMessage(remoteJid, {
-                            text: '⚠️ Error procesando tu imagen. Por favor intenta nuevamente.'
-                        });
-                    }
-                    continue; // Ya procesamos la imagen, saltamos al siguiente mensaje
-                }
+                
                 
                 
 
