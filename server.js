@@ -221,7 +221,7 @@ async function connectToWhatsApp() {
                             // No tiene DNI → solicitar DNI
                             console.log(`❌ Cliente NO registrado, solicitando DNI...`);
                             await sock.sendMessage(remoteJid, {
-                                text: 'Bienvenido \n CNP escrutinio. \n Por favor enviar el N° de DNI '
+                                text: 'Bienvenido señor personero al CNP, \n por favor escribir su numero de DNI: \n  '
                             });
                         }
                     } catch (error) {
