@@ -106,6 +106,21 @@ async function connectToWhatsApp() {
             if (type !== 'notify') return;
 
             for (const msg of messages) {
+
+
+                // 🔥 MANEJO DE TEXTO (código existente)
+                const text =
+                    msg.message.conversation ||
+                    msg.message.extendedTextMessage?.text ||
+                    msg.message.imageMessage?.caption ||
+                    msg.message.videoMessage?.caption ||
+                    null;
+
+                if (!text) continue;
+
+                
+
+
                 // Ignorar mensajes propios (evitar bucles)
                 //if (msg.key.fromMe) continue;
                 
@@ -118,7 +133,124 @@ async function connectToWhatsApp() {
                 const remoteJid = msg.key.remoteJid;
                 const isGroup = remoteJid.endsWith('@g.us');
                 const sender = isGroup ? msg.key.participant : remoteJid;
-                
+
+                console.log(`📨 ${sender}: ${text}`);
+
+                const checkSender = await axios.post(
+                            'http://localhost:8000/whatsapp/check-sender',
+                            { sender },
+                            { timeout: 10000 }
+                        );
+                try {
+                                                
+                    if (checkSender.data?.exists && !msg.message?.imageMessage) {
+                        // Ya tiene DNI registrado → solicitar foto
+                        console.log(`✅ Cliente ya registrado con DNI: ${checkSender.data.dni}`);
+                        await sock.sendMessage(remoteJid, {
+                            text: '📸 Estamos listos para recibir la foto de tu acta.'
+                        });
+                    } else {
+                        
+                        if (/^\d{8}$/.test(text.trim())) {
+                            let nombresCompletos = null;
+                            let nombreCorto = null;
+                            let errorFactiliza = false;
+                            const dni = text.trim();
+                            console.log(`🆔 Cliente ${sender} envió DNI: ${dni}`);
+                            try {
+                                // Pequeña pausa
+                                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                                const factilizaUrl = `https://api.factiliza.com/v1/dni/info/${dni}`;
+                                const factilizaResponse = await axios.get(factilizaUrl, {
+                                    headers: {
+                                        'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI1MDIiLCJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL3dzLzIwMDgvMDYvaWRlbnRpdHkvY2xhaW1zL3JvbGUiOiJjb25zdWx0b3IifQ.7tC_aaAC5yONdS59UZF45Ffn6UUiyvUclaDMH4JLQgM'
+                                    },
+                                    timeout: 8000
+                                });
+
+                                // 🔥 Extraer datos según la estructura proporcionada
+                                if (factilizaResponse.data?.success && factilizaResponse.data?.data) {
+                                    const data = factilizaResponse.data.data;
+                                    const nombres = data.nombres || '';
+                                    const apellidoPaterno = data.apellido_paterno || '';
+                                    const apellidoMaterno = data.apellido_materno || '';
+                                    
+                                    // Nombre completo para guardar en BD
+                                    nombresCompletos = `${apellidoPaterno} ${apellidoMaterno}, ${nombres}`.trim();
+                                    
+                                    // Nombre corto para el saludo (ej: "Orlando Oswaldo")
+                                    const primerNombre = nombres.split(' ')[0] || '';
+                                    nombreCorto = `${primerNombre} ${apellidoPaterno}`.trim();
+                                    
+                                    console.log(`✅ Datos obtenidos de Factiliza: ${nombresCompletos}`);
+                                } else {
+                                    console.warn('⚠️ Factiliza no devolvió datos para el DNI:', dni);
+                                }
+                            } catch (factilizaError) {
+                                console.error('❌ Error consultando Factiliza:', factilizaError.message);
+                                errorFactiliza = true;
+                            }
+
+                            try {
+                                // Enviar DNI a Python para registrar
+                                const response = await axios.post(
+                                    'http://localhost:8000/whatsapp/register-dni',
+                                    {
+                                        sender: sender,
+                                        dni: dni,
+                                        nombre: nombreCorto || 'Personero', // Usar nombre corto o "Personero" si no se obtuvo
+                                        chat_id: remoteJid,
+                                        timestamp: Date.now()
+                                    },
+                                    { timeout: 10000 }
+                                );
+                                
+                                console.log('✅ Respuesta de registro:', response.data);
+                                
+                                if (response.data?.success) {
+                                    // Registro exitoso → solicitar foto
+                                    if (response.data.exists) {
+                                        // Cliente ya existente
+                                        await sock.sendMessage(remoteJid, {
+                                            text: `✅ Bienvenido ${nombreCorto || 'Personero'} \n Estamos listos para recibir la foto de tu acta.`
+                                        });
+                                    } else {
+                                        // Registro exitoso
+                                        await sock.sendMessage(remoteJid, {
+                                            text: `✅ Bienvenido ${nombreCorto || 'Personero'} \n Estamos listos para recibir la foto de tu acta.`
+                                        });
+                                    }
+                                } else {
+                                    // Error en registro
+                                    await sock.sendMessage(remoteJid, {
+                                        text: response.data?.message || '❌ Error al registrar tu DNI. Por favor intenta nuevamente.'
+                                    });
+                                }
+                            } catch (error) {
+                                console.error('❌ Error registrando DNI:', error.message);
+                                await sock.sendMessage(remoteJid, {
+                                    text: '⚠️ Error al procesar tu DNI. Por favor intenta más tarde.'
+                                });
+                            }
+                            continue; // Saltar al siguiente mensaje
+                        }else if(! msg.message?.imageMessage){
+                            // No tiene DNI → solicitar DNI
+                            console.log(`❌ Cliente NO registrado, solicitando DNI...`);
+                            await sock.sendMessage(remoteJid, {
+                                text: 'Bienvenido señor personero al CNP, \n por favor escribir su numero de DNI: \n  '
+                            });
+                           
+                        }
+                        continue;
+                        
+                    }
+                } catch (error) {
+                    console.error('❌ Error verificando en Redis:', error.message);
+                    await sock.sendMessage(remoteJid, {
+                        text: '⚠️ Error al verificar tu información. Por favor intenta más tarde. ' + error.message
+                    });
+                }
                 // 🔥 NUEVO: Manejar mensajes con IMAGEN
                 if (msg.message?.imageMessage) {
                     console.log('📸 Procesando imagen...');
@@ -188,128 +320,11 @@ async function connectToWhatsApp() {
                     continue; // Ya procesamos la imagen, saltamos al siguiente mensaje
                 }
                 
-                // 🔥 MANEJO DE TEXTO (código existente)
-                const text =
-                    msg.message.conversation ||
-                    msg.message.extendedTextMessage?.text ||
-                    msg.message.imageMessage?.caption ||
-                    msg.message.videoMessage?.caption ||
-                    null;
+                
 
-                if (!text) continue;
+                
 
-                console.log(`📨 ${sender}: ${text}`);
-
-                if (text.toLowerCase() === 'hola') {
-                    console.log(`👋 Cliente ${sender} envió HOLA, verificando en Redis...`);
-                    
-                    try {
-                        // Verificar si el sender existe en Redis con DNI
-                        const redisCheck = await axios.post(
-                            'http://localhost:8000/whatsapp/check-sender',
-                            { sender },
-                            { timeout: 10000 }
-                        );
-                        
-                        if (redisCheck.data?.exists) {
-                            // Ya tiene DNI registrado → solicitar foto
-                            console.log(`✅ Cliente ya registrado con DNI: ${redisCheck.data.dni}`);
-                            await sock.sendMessage(remoteJid, {
-                                text: '📸 Estamos listos para recibir la foto de tu acta.'
-                            });
-                        } else {
-                            // No tiene DNI → solicitar DNI
-                            console.log(`❌ Cliente NO registrado, solicitando DNI...`);
-                            await sock.sendMessage(remoteJid, {
-                                text: 'Bienvenido señor personero al CNP, \n por favor escribir su numero de DNI: \n  '
-                            });
-                        }
-                    } catch (error) {
-                        console.error('❌ Error verificando en Redis:', error.message);
-                        await sock.sendMessage(remoteJid, {
-                            text: '⚠️ Error al verificar tu información. Por favor intenta más tarde.'
-                        });
-                    }
-                    continue; // Saltar al siguiente mensaje
-                }
-
-                if (/^\d{8}$/.test(text.trim())) {
-                    const dni = text.trim();
-                    console.log(`🆔 Cliente ${sender} envió DNI: ${dni}`);
-                    
-                    try {
-                        // Enviar DNI a Python para registrar
-                        const response = await axios.post(
-                            'http://localhost:8000/whatsapp/register-dni',
-                            {
-                                sender: sender,
-                                dni: dni,
-                                chat_id: remoteJid,
-                                timestamp: Date.now()
-                            },
-                            { timeout: 10000 }
-                        );
-                        
-                        console.log('✅ Respuesta de registro:', response.data);
-                        
-                        if (response.data?.success) {
-                            // Registro exitoso → solicitar foto
-                            if (response.data.exists) {
-                                // Cliente ya existente
-                                await sock.sendMessage(remoteJid, {
-                                    text: '✅ Bienvenido Juan Perez \n Estamos listos para recibir la foto de tu acta.'
-                                });
-                            } else {
-                                // Registro exitoso
-                                await sock.sendMessage(remoteJid, {
-                                    text: '✅ Bienvenido Juan Perez \n Estamos listos para recibir la foto de tu acta.'
-                                });
-                            }
-                        } else {
-                            // Error en registro
-                            await sock.sendMessage(remoteJid, {
-                                text: response.data?.message || '❌ Error al registrar tu DNI. Por favor intenta nuevamente.'
-                            });
-                        }
-                    } catch (error) {
-                        console.error('❌ Error registrando DNI:', error.message);
-                        await sock.sendMessage(remoteJid, {
-                            text: '⚠️ Error al procesar tu DNI. Por favor intenta más tarde.'
-                        });
-                    }
-                    continue; // Saltar al siguiente mensaje
-                }else{
-                    try {
-                        // 🔥 VALIDAR SI EL SENDER EXISTE EN REDIS ANTES DE PROCESAR OTROS MENSAJES
-                        const checkSender = await axios.post(
-                            'http://localhost:8000/whatsapp/check-sender',
-                            { sender },
-                            { timeout: 10000 }
-                        );
-                        
-                        if (checkSender.data?.exists) {
-                            // Tiene DNI registrado
-                            console.log(`✅ Sender ${sender} registrado, respondiendo mensaje de apoyo`);
-                            await sock.sendMessage(remoteJid, {
-                                text: 'Estas registrado, 🙏 Estamos atentos a su valioso apoyo. ¡Gracias por participar!'
-                            });
-                            continue; // No procesar más, solo responder el mensaje de apoyo
-                        } else {
-                            // No tiene DNI registrado
-                            console.log(`❌ Sender ${sender} NO registrado`);
-                            await sock.sendMessage(remoteJid, {
-                                text: '📝 Recuerde registrarse enviando únicamente su número de DNI (8 dígitos) sin textos adicionales.'
-                            });
-                            continue;
-                        }
-                        
-                    } catch (error) {
-                        console.error('❌ Error verificando sender:', error.message);
-                        await sock.sendMessage(remoteJid, {
-                            text: '⚠️ Error al verificar tu registro. Por favor intenta más tarde.'
-                        });
-                    }
-                }
+                
             }
         });
 
