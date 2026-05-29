@@ -106,12 +106,12 @@ async function connectToWhatsApp() {
             if (type !== 'notify') return;
 
             for (const msg of messages) {
-
+                console.log("1111");
                  if (msg.key.fromMe) {
                     console.log('🚫 Mensaje propio ignorado');
-                    continue;
+                    //continue;
                 }
-
+console.log("2222");
                 // 🔥 MANEJO DE TEXTO (código existente)
                 const text =
                     msg.message?.conversation ||
@@ -123,7 +123,7 @@ async function connectToWhatsApp() {
                 if (!text) continue;
 
                 
-
+console.log("3333");
 
                 // Ignorar mensajes propios (evitar bucles)
                 //if (msg.key.fromMe) continue;
@@ -133,18 +133,19 @@ async function connectToWhatsApp() {
                     console.log("⚠️ Mensaje sin contenido (ignorado)");
                     return;
                 }
+                console.log("4444");
                 // Obtener información básica
                 const remoteJid = msg.key.remoteJid;
                 const isGroup = remoteJid.endsWith('@g.us');
                 const sender = isGroup ? msg.key.participant : remoteJid;
 
                 console.log(`📨 ${sender}: ${text}`);
-
+console.log("555555");
                 if (isGroup) {
                     console.log(`📋 Mensaje de grupo ignorado: ${remoteJid}`);
                     return; // Salir sin procesar
                 }
-
+console.log("6666");
                 const checkSender = await axios.post(
                             'http://localhost:8000/whatsapp/check-sender',
                             { sender },
