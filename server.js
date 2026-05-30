@@ -140,12 +140,10 @@ console.log("3333");
                 const sender = isGroup ? msg.key.participant : remoteJid;
 
                 console.log(`📨 ${sender}: ${text}`);
-console.log("555555");
                 if (isGroup) {
                     console.log(`📋 Mensaje de grupo ignorado: ${remoteJid}`);
                     return; // Salir sin procesar
                 }
-console.log("6666");
                 const checkSender = await axios.post(
                             'http://localhost:8000/whatsapp/check-sender',
                             { sender },
@@ -203,9 +201,9 @@ console.log("6666");
                         // Ya tiene DNI registrado → solicitar foto
                         console.log(`✅ Cliente ya registrado con DNI: ${checkSender.data.dni}`);
                         await sock.sendMessage(remoteJid, {
-                            text: '📸 Estamos listos para recibir la foto de tu acta.'
+                            text: '📸 Estamos listos para recibir la foto de tu acta. 📸'
                         });
-                    } else if (msg.message?.imageMessage) {
+                    } else if (checkSender.data?.exists && msg.message?.imageMessage) {
                         console.log('📸 Procesando imagen...');
                         
                         try {
@@ -335,12 +333,12 @@ console.log("6666");
                                     if (response.data.exists) {
                                         // Cliente ya existente
                                         await sock.sendMessage(remoteJid, {
-                                            text: `✅ Bienvenido ${nombreCorto || 'Personero'} \n Estamos listos para recibir la foto de tu acta.`
+                                            text: `✅ Bienvenido ${nombreCorto || 'Personero'} \n Estamos listos para recibir la foto de tu acta. 📸`
                                         });
                                     } else {
                                         // Registro exitoso
                                         await sock.sendMessage(remoteJid, {
-                                            text: `✅ Bienvenido ${nombreCorto || 'Personero'} \n Estamos listos para recibir la foto de tu acta.`
+                                            text: `✅ Bienvenido ${nombreCorto || 'Personero'} \n Estamos listos para recibir la foto de tu acta. 📸`
                                         });
                                     }
                                 } else {
@@ -360,7 +358,7 @@ console.log("6666");
                             // No tiene DNI → solicitar DNI
                             console.log(`❌ Cliente NO registrado, solicitando DNI...`);
                             await sock.sendMessage(remoteJid, {
-                                text: 'Bienvenido señor personero al CNP, \n por favor escribir su numero de DNI: \n  '
+                                text: 'Bienvenido personero al CNP, \n por favor escribir su numero de DNI: \n  '
                             });
                            
                         }
